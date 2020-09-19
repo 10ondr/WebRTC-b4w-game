@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Jungle Outpost | Blend4Web</title>
+        <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgo=">
+        <meta name="description" content="P2P game" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"><style>
+
+    body {
+        overflow: hidden;
+        margin: 0;
+        padding: 0;
+    }
+
+    div#canvas3d {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+    }
+
+    .button {
+        background-color: #4CAF50; /* Green */
+        border: none;
+        color: white;
+        padding: 16px 32px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 16px;
+        margin: 4px 2px;
+        transition-duration: 0.4s;
+        cursor: pointer;
+        margin-right: 20px;
+        }
+
+    .button1 {
+        background-color: white; 
+        color: black; 
+        border: 2px solid #4CAF50;
+    }
+
+    .button1:hover {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .button2 {
+        background-color: white; 
+        color: black; 
+        border: 2px solid #008CBA;
+    }
+
+    .button2:hover {
+        background-color: #008CBA;
+        color: white;
+    }
+
+    .button3 {
+        background-color: white; 
+        color: black; 
+        border: 2px solid #f44336;
+    }
+
+    .button3:hover {
+        background-color: #f44336;
+        color: white;
+    }
+
+    input[type=text] {
+        padding: 12px 20px;
+        margin: 8px 0;
+        box-sizing: border-box;
+    }
+
+    label {
+        font-size: 20px;
+        margin-right: 20px;
+    }
+
+    .menuInner{
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .menuBtns{
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 20px;
+        margin-bottom: 20px;
+    }
+
+</style>
+    <script src="https://cdn.pubnub.com/webrtc/webrtc-v2.js"></script>
+    <script type="module" src="firstperson.js"></script>
+    </head>
+<body>
+
+    <div id="menu">
+        <div class="menuBtns">
+            <button class="button button1" id="selectCreate" onClick="selectGame(true);">New game</button>
+            <button class="button button2" id="selectJoin" onClick="selectGame(false);">Join existing game</button>
+        </div>
+        <div class="menuInner">
+
+    
+            <div id="createCont" style="display: none;">
+                <h1>Create new game session</h1>
+                Second player will have to input the same Game name as the one typed below.<br><br>
+                <label for="gameName">Game name:</label>
+                <input type="text" id="gameNameCreate" name="gameNameCreate">
+                <br>
+                <button class="button button3" onClick="createGame();">Create game</button>
+            </div>
+
+            <div id="joinCont" style="display: none;">
+                <h1>Join an existing game session</h1>
+                Type the same Game name your friend entered when creating the game session.<br><br>
+                <label for="gameNameJoin">Game name:</label>
+                <input type="text" id="gameNameJoin" name="gameNameJoin">
+                <br>
+                <button class="button button3" onClick="joinGame();">Join game</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="canvas3d"></div>
+</body>
+
+<script>
+    // Create new game (true) or Join an existing game (false)
+    function selectGame(type){
+        if(type){
+            document.getElementById("createCont").style.display = "block";
+            document.getElementById("joinCont").style.display = "none";
+            document.getElementById("selectCreate").style.display = "none";
+            document.getElementById("selectJoin").style.display = "block";
+            document.getElementById("gameNameCreate").value = "random" + (Math.random() * 100000).toFixed(0);
+        }
+        else{
+            document.getElementById("createCont").style.display = "none";
+            document.getElementById("joinCont").style.display = "block";
+            document.getElementById("selectCreate").style.display = "block";
+            document.getElementById("selectJoin").style.display = "none";
+        }
+    }
+
+    function hideMenu(){
+        document.getElementById("menu").style.display = "none";
+    }
+    
+    function createGame(){
+        var gameName = document.getElementById("gameNameCreate").value;
+        document.title = gameName + " | Player 1";
+        hideMenu();
+        webRTC_init(null, "gwrtc" + gameName);
+    }
+
+    function joinGame(){
+        var gameName = document.getElementById("gameNameJoin").value;
+        var userName = "gwrtcpeer" + (Math.random() * 100000).toFixed(0);
+        document.title = gameName + " | Player 2";
+        hideMenu();
+        webRTC_init("gwrtc" + gameName, userName);
+    }
+
+</script>
+
+<script>
+    // PubNub webRTC session
+    phone = null;
+    my_username = "";
+    session = null
+
+    // Update remote peer every X ms
+    message_timeout = 200;
+
+    // Previous position of "cam"
+    old_pos = [0, 0, 0];
+    // Previous rotation of "cam"
+    old_rot = [0, 0, 0];
+
+    // Interpolate peer capsule movement
+    interpolating = false;
+    intr_target_tsr = [0, 0, 0, 1, 0, 0, 0, 0];
+    intr_start_tsr = [0, 0, 0, 1, 0, 0, 0, 0];
+    intr_steps = 10;
+    intr_step = 0;
+
+    // Peer variables
+    hit_hp = 20;
+    peer_hp = 100;
+    peer_hit = false;
+
+    // This player variables
+    own_hp = 100;
+    own_player_num = 0;
+
+    // Score
+    pl1_score = 0;
+    pl2_score = 0;
+    pl1_score_objs = [];
+    pl2_score_objs = [];
+
+    // 3D score text abstraction function
+    function update_score(player_num, score){
+        if(score > 99 || score < 0 || player_num > 2 || player_num < 1)
+            return;
+
+        var empty1 = null;
+        var empty2 = null;
+        if(player_num == 1){
+            for (i = 0; i < pl1_score_objs.length; i++) {
+                m_scs.remove_object(pl1_score_objs[i]);
+            }
+            pl1_score_objs = [];
+            empty1 = pl1_num_positions[0];
+            empty2 = pl1_num_positions[1];
+        }
+        else{
+            for (i = 0; i < pl2_score_objs.length; i++) {
+                m_scs.remove_object(pl2_score_objs[i]);
+            }
+            pl2_score_objs = [];
+            empty1 = pl2_num_positions[0];
+            empty2 = pl2_num_positions[1];
+        }
+        var digit1 = score > 9 ? parseInt(score.toString()[1]) : parseInt(score.toString()[0]);
+        var new_obj1 = m_obj.copy(number_objects[digit1], "pl" + player_num + "_first", true);
+        var pos1 = m_tran.get_translation(empty1);
+        m_tran.set_translation(new_obj1, pos1[0], pos1[1], pos1[2]);
+        m_scs.append_object(new_obj1);
+        if(player_num == 1)
+            pl1_score_objs.push(new_obj1);
+        else
+            pl2_score_objs.push(new_obj1);
+        
+        if(score > 9){
+            var digit2 = parseInt(score.toString()[0]);
+            var new_obj2 = m_obj.copy(number_objects[digit2], "pl" + player_num + "_second", true);
+            var pos2 = m_tran.get_translation(empty2);
+            m_tran.set_translation(new_obj2, pos2[0], pos2[1], pos2[2]);
+            m_scs.append_object(new_obj2);
+            if(player_num == 1)
+                pl1_score_objs.push(new_obj2);
+            else
+                pl2_score_objs.push(new_obj2);
+        }
+    }
+
+    // Interpolate peer capsule for smoother movement
+    function interpolate(){
+        interpolating = true;
+        var tsr = m_tsr.interpolate(intr_start_tsr, intr_target_tsr, intr_step);
+        m_tran.set_translation(peer, tsr[0], tsr[1], tsr[2]);
+        m_tran.set_rotation(peer, tsr[4], tsr[5], tsr[6], tsr[7]);
+        intr_step += 1 / intr_steps;
+        
+        if(intr_step <= 1)
+            setTimeout(interpolate, message_timeout / intr_steps);
+        else
+            interpolating = false;
+    }
+
+    // Init the PubNub WebRTC session
+    // remotename - null for the first player (who created the game)
+    function webRTC_init(remotename, username) {
+        x = document.querySelectorAll(".initBtn");
+        for (i = 0; i < x.length; i++) {
+            x[i].remove();
+        }
+
+        if(remotename)
+            own_player_num = 2;
+        else
+            own_player_num = 1;
+
+        my_username = username;
+        phone = PHONE({
+            number        : username,
+            publish_key   : 'pub-c-561a7378-fa06-4c50-a331-5c0056d0163c',
+            subscribe_key : 'sub-c-17b7db8a-3915-11e4-9868-02ee2ddab7fe',
+            media         : { audio : false, video : false },
+            ssl           : true
+        });
+
+        phone.ready(function(){
+            if(remotename)
+                session = phone.dial(remotename);
+        });
+
+        phone.message(function(session, message) {
+            //console.log(message);
+            if(peer){
+                var orig_pos = m_tran.get_translation(peer);
+                var orig_quat = m_tran.get_rotation(peer);
+                var new_pos = null;
+                var new_quat = null;
+                // Received position update
+                if(message.t){
+                    new_pos = message.t;
+                }
+                else{
+                    new_pos = orig_pos;
+                }
+                // Received rotation update
+                if(message.r){
+                    new_quat = m_util.euler_to_quat(message.r);
+                }
+                else{
+                    new_quat = orig_quat;
+                }
+                // Received event (hit) update
+                if(message.e){
+                    own_hp -= message.e;
+                    if(own_hp < 0){
+                        own_hp = 100;
+                        if(own_player_num == 2){
+                            pl1_score += 1;
+                            update_score(1, pl1_score);
+                        }
+                        else if(own_player_num == 1){
+                            pl2_score += 1;
+                            update_score(2, pl2_score);
+                        }
+                    }
+                }
+                
+                // Interpolate position or/and rotation
+                if(message.t || message.r){
+                    intr_start_tsr = [orig_pos[0], orig_pos[1], orig_pos[2], 1, orig_quat[0], orig_quat[1], orig_quat[2], orig_quat[3]];
+                    intr_target_tsr = [new_pos[0], new_pos[1], new_pos[2], 1, new_quat[0], new_quat[1], new_quat[2], new_quat[3]];
+                    intr_step = 1 / intr_steps;
+                    if(!interpolating)
+                        interpolate();
+                }
+            }
+            else{
+                console.log("Peer is still null...");
+            }
+        } );
+
+        m_init(); // Init the Blend4Web engine
+        setInterval(update_remote, message_timeout); // Start updating the peer
+    }
+    
+    // Send position, rotation or/and event update
+    function publishSampleMessage(pos, rot, event) {
+        if(pos || rot || event){
+            var obj = {};
+            if(pos)
+                obj.t = pos;
+            if(rot)
+                obj.r = rot;
+            if(event)
+                obj.e = event;
+            phone.send(obj);
+        }
+    }
+
+    // Update remote peer if a change occured (position, rotation, event)
+    //Called periodically
+    function update_remote(){
+        if(!cam){
+            console.log("Init not finished yet...");
+            return;
+        }
+        var pos = m_tran.get_translation(cam);
+        if(m_vec3.sqrDist(old_pos, pos) > 0.03){ // Don't send tiny movements
+            m_vec3.copy(pos, old_pos);
+            pos[2] -= 0.8; // Height correction
+            pos[0] = pos[0].toFixed(4);
+            pos[1] = pos[1].toFixed(4);
+            pos[2] = pos[2].toFixed(4);
+        }
+        else{
+            pos = null;
+        }
+
+        var rot = m_tran.get_rotation_euler(cam);
+        if(m_vec3.sqrDist(old_rot, rot) > 0.012){ // Don't send tiny rotations
+            m_vec3.copy(rot, old_rot);
+            rot[0] -= 1.57080543041229; // X-axis 90 degree correction
+            rot[0] = rot[0].toFixed(5);
+            rot[1] = rot[1].toFixed(5);
+            rot[2] = rot[2].toFixed(5);
+        }
+        else{
+            rot = null;
+        }
+
+        var event = null;
+        
+        if(peer_hit){
+            peer_hit = false;
+            peer_hp -= hit_hp;
+            event = hit_hp;
+            
+            if(peer_hp < 0){
+                peer_hp = 100;
+                if(own_player_num == 1){
+                    pl1_score += 1;
+                    update_score(1, pl1_score);
+                }
+                else if(own_player_num == 2){
+                    pl2_score += 1;
+                    update_score(2, pl2_score);
+                }
+            }
+
+            var bg = peer_hp / 100;
+            if(bg < 0)
+                bg = 0;
+            var rgba = [1.0, bg, bg, 1.0];
+            m_mat.set_diffuse_color(peer, "PeerMaterial", rgba);
+        }
+
+        publishSampleMessage(pos, rot, event);
+    }
+</script>
+</html>
+
